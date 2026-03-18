@@ -1,0 +1,38 @@
+[package]
+name = "burn-npu"
+version = "0.3.0"
+edition = "2021"
+description = "NPU backend for the Burn deep learning framework. Drop-in replacement that runs on Apple Neural Engine, Intel NPU, and Qualcomm Hexagon."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/franeknowak/burn-npu"
+keywords = ["burn", "npu", "neural-engine", "machine-learning", "inference"]
+categories = ["science", "mathematics"]
+
+[features]
+default = []
+apple = []
+intel = ["openvino"]
+qualcomm = []
+
+[dependencies]
+burn = { version = "0.20" }
+burn-tensor = { version = "0.20" }
+burn-ndarray = { version = "0.20" }
+ndarray = { version = "0.17" }
+openvino = { version = "0.7", optional = true, features = ["runtime-linking"] }
+
+[dev-dependencies]
+burn = { version = "0.20" }
+burn-wgpu = { version = "0.20" }
+candle-core = { version = "0.8" }
+candle-nn = { version = "0.8" }
+reqwest = { version = "0.12", features = ["blocking"] }
+indicatif = "0.17"
+tokenizers = "0.21"
+safetensors = "0.4"
+dirs = "5"
+memmap2 = "0.9"
+
+[[example]]
+name = "bench"
+path = "examples/bench.rs"
