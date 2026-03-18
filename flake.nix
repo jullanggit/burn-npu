@@ -21,10 +21,24 @@
       in
       {
         devShells.default = pkgs.mkShell {
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+            pkgs.openssl
+            pkgs.openvino
+            pkgs.level-zero
+            pkgs.vulkan-loader
+            pkgs.libglvnd
+          ];
+
           packages = with pkgs; [
             pkg-config
             openssl
             openvino
+            level-zero
+            intel-npu-driver
+            vulkan-loader
+            vulkan-headers
+            vulkan-tools
+            libglvnd
           ];
         };
       }

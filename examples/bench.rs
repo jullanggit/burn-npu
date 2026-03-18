@@ -63,7 +63,12 @@ impl<B: Backend> Gpt2<B> {
                 },
             })
             .collect();
-        Self { wte, wpe, blocks, ln_f }
+        Self {
+            wte,
+            wpe,
+            blocks,
+            ln_f,
+        }
     }
 
     /// Forward pass. Returns logits [batch, seq, vocab] (last token only for efficiency).
@@ -82,7 +87,7 @@ impl<B: Backend> Gpt2<B> {
 
         // Final LN — return hidden states (skip LM head for benchmark simplicity)
         let x = self.ln_f.forward(x); // [batch, seq, hidden]
-        // Take last token: [batch, hidden]
+                                      // Take last token: [batch, hidden]
         x.narrow(1, seq_len - 1, 1).reshape([_batch, HIDDEN])
     }
 
@@ -173,9 +178,14 @@ fn main() {
     run_bench::<burn_ndarray::NdArray>("burn-ndarray (CPU)", 10);
 
     // Wgpu (Metal/Vulkan GPU) — may not be available on all systems
-    if std::panic::catch_unwind(|| run_bench::<burn_wgpu::Wgpu>("burn-wgpu (GPU)", 10)).is_err() {
-        println!("{:<30} {:>12}   (no GPU adapter found)", "burn-wgpu (GPU)", "N/A");
-    }
+    // if std::panic::catch_unwind(|| run_bench::<burn_wgpu::Wgpu>("burn-wgpu (GPU)", 10)).is_err() {
+    //     println!(
+    //         "{:<30} {:>12}   (no GPU adapter found)",
+    //         "burn-wgpu (GPU)", "N/A"
+    //     );
+    // }
+    // Wgpu (Metal GPU)
+    // run_bench::<burn_wgpu::Wgpu>("burn-wgpu (Metal GPU)", 10);
 
     // NpuBurnBackend — label detected at runtime
     #[cfg(any(feature = "apple", feature = "intel", feature = "qualcomm"))]
@@ -208,31 +218,60 @@ fn run_candle(name: &str, device: &candle_core::Device, iters: usize) {
     let wte = Tensor::randn(0f32, 1.0, &[VOCAB, h], device).unwrap();
     let wpe = Tensor::randn(0f32, 1.0, &[MAX_SEQ, h], device).unwrap();
 
-    struct CLayer { ln1w: Tensor, ln1b: Tensor, aw: Tensor, ab: Tensor, pw: Tensor, pb: Tensor,
-                    ln2w: Tensor, ln2b: Tensor, fw: Tensor, fb: Tensor, mw: Tensor, mb: Tensor }
-    let layers: Vec<CLayer> = (0..LAYERS).map(|_| CLayer {
-        ln1w: Tensor::ones(&[h], DType::F32, device).unwrap(),
-        ln1b: Tensor::zeros(&[h], DType::F32, device).unwrap(),
-        aw: Tensor::randn(0f32, 0.02, &[h, 3*h], device).unwrap(),
-        ab: Tensor::zeros(&[3*h], DType::F32, device).unwrap(),
-        pw: Tensor::randn(0f32, 0.02, &[h, h], device).unwrap(),
-        pb: Tensor::zeros(&[h], DType::F32, device).unwrap(),
-        ln2w: Tensor::ones(&[h], DType::F32, device).unwrap(),
-        ln2b: Tensor::zeros(&[h], DType::F32, device).unwrap(),
-        fw: Tensor::randn(0f32, 0.02, &[h, FFN], device).unwrap(),
-        fb: Tensor::zeros(&[FFN], DType::F32, device).unwrap(),
-        mw: Tensor::randn(0f32, 0.02, &[FFN, h], device).unwrap(),
-        mb: Tensor::zeros(&[h], DType::F32, device).unwrap(),
-    }).collect();
+    struct CLayer {
+        ln1w: Tensor,
+        ln1b: Tensor,
+        aw: Tensor,
+        ab: Tensor,
+        pw: Tensor,
+        pb: Tensor,
+        ln2w: Tensor,
+        ln2b: Tensor,
+        fw: Tensor,
+        fb: Tensor,
+        mw: Tensor,
+        mb: Tensor,
+    }
+    let layers: Vec<CLayer> = (0..LAYERS)
+        .map(|_| CLayer {
+            ln1w: Tensor::ones(&[h], DType::F32, device).unwrap(),
+            ln1b: Tensor::zeros(&[h], DType::F32, device).unwrap(),
+            aw: Tensor::randn(0f32, 0.02, &[h, 3 * h], device).unwrap(),
+            ab: Tensor::zeros(&[3 * h], DType::F32, device).unwrap(),
+            pw: Tensor::randn(0f32, 0.02, &[h, h], device).unwrap(),
+            pb: Tensor::zeros(&[h], DType::F32, device).unwrap(),
+            ln2w: Tensor::ones(&[h], DType::F32, device).unwrap(),
+            ln2b: Tensor::zeros(&[h], DType::F32, device).unwrap(),
+            fw: Tensor::randn(0f32, 0.02, &[h, FFN], device).unwrap(),
+            fb: Tensor::zeros(&[FFN], DType::F32, device).unwrap(),
+            mw: Tensor::randn(0f32, 0.02, &[FFN, h], device).unwrap(),
+            mb: Tensor::zeros(&[h], DType::F32, device).unwrap(),
+        })
+        .collect();
     let lnfw = Tensor::ones(&[h], DType::F32, device).unwrap();
     let lnfb = Tensor::zeros(&[h], DType::F32, device).unwrap();
 
     let candle_forward = |tokens: &Tensor| -> Tensor {
         let (batch, seq) = (tokens.dim(0).unwrap(), tokens.dim(1).unwrap());
         let positions = Tensor::arange(0u32, seq as u32, device).unwrap();
-        let tok_emb = wte.index_select(tokens.flatten_all().unwrap().to_dtype(DType::U32).as_ref().unwrap(), 0)
-            .unwrap().reshape(&[batch, seq, h]).unwrap();
-        let pos_emb = wpe.index_select(&positions, 0).unwrap().unsqueeze(0).unwrap();
+        let tok_emb = wte
+            .index_select(
+                tokens
+                    .flatten_all()
+                    .unwrap()
+                    .to_dtype(DType::U32)
+                    .as_ref()
+                    .unwrap(),
+                0,
+            )
+            .unwrap()
+            .reshape(&[batch, seq, h])
+            .unwrap();
+        let pos_emb = wpe
+            .index_select(&positions, 0)
+            .unwrap()
+            .unsqueeze(0)
+            .unwrap();
         let mut x = (tok_emb + pos_emb).unwrap();
 
         for l in &layers {
@@ -242,27 +281,92 @@ fn run_candle(name: &str, device: &candle_core::Device, iters: usize) {
             let diff = x.broadcast_sub(&mean).unwrap();
             let var = diff.sqr().unwrap().mean_keepdim(2).unwrap();
             let std = (var + 1e-5).unwrap().sqrt().unwrap();
-            let n = diff.broadcast_div(&std).unwrap().broadcast_mul(&l.ln1w).unwrap().broadcast_add(&l.ln1b).unwrap();
+            let n = diff
+                .broadcast_div(&std)
+                .unwrap()
+                .broadcast_mul(&l.ln1w)
+                .unwrap()
+                .broadcast_add(&l.ln1b)
+                .unwrap();
 
             // QKV + attention
-            let n2d = n.reshape(&[batch*seq, h]).unwrap();
-            let qkv = n2d.matmul(&l.aw).unwrap().reshape(&[batch, seq, 3*h]).unwrap().broadcast_add(&l.ab).unwrap();
-            let q = qkv.narrow(2, 0, h).unwrap().reshape(&[batch, seq, HEADS, h/HEADS]).unwrap().transpose(1, 2).unwrap().contiguous().unwrap();
-            let k = qkv.narrow(2, h, h).unwrap().reshape(&[batch, seq, HEADS, h/HEADS]).unwrap().transpose(1, 2).unwrap().contiguous().unwrap();
-            let v = qkv.narrow(2, 2*h, h).unwrap().reshape(&[batch, seq, HEADS, h/HEADS]).unwrap().transpose(1, 2).unwrap().contiguous().unwrap();
-            let scale = ((h/HEADS) as f64).sqrt();
-            let scores = (q.matmul(&k.transpose(2, 3).unwrap().contiguous().unwrap()).unwrap() / scale).unwrap();
-            let mut mask_data = vec![0f32; seq*seq];
-            for i in 0..seq { for j in i+1..seq { mask_data[i*seq+j] = -1e9; } }
-            let mask = Tensor::from_vec(mask_data, &[1, 1, seq, seq], device).unwrap().expand(&[batch, HEADS, seq, seq]).unwrap();
+            let n2d = n.reshape(&[batch * seq, h]).unwrap();
+            let qkv = n2d
+                .matmul(&l.aw)
+                .unwrap()
+                .reshape(&[batch, seq, 3 * h])
+                .unwrap()
+                .broadcast_add(&l.ab)
+                .unwrap();
+            let q = qkv
+                .narrow(2, 0, h)
+                .unwrap()
+                .reshape(&[batch, seq, HEADS, h / HEADS])
+                .unwrap()
+                .transpose(1, 2)
+                .unwrap()
+                .contiguous()
+                .unwrap();
+            let k = qkv
+                .narrow(2, h, h)
+                .unwrap()
+                .reshape(&[batch, seq, HEADS, h / HEADS])
+                .unwrap()
+                .transpose(1, 2)
+                .unwrap()
+                .contiguous()
+                .unwrap();
+            let v = qkv
+                .narrow(2, 2 * h, h)
+                .unwrap()
+                .reshape(&[batch, seq, HEADS, h / HEADS])
+                .unwrap()
+                .transpose(1, 2)
+                .unwrap()
+                .contiguous()
+                .unwrap();
+            let scale = ((h / HEADS) as f64).sqrt();
+            let scores = (q
+                .matmul(&k.transpose(2, 3).unwrap().contiguous().unwrap())
+                .unwrap()
+                / scale)
+                .unwrap();
+            let mut mask_data = vec![0f32; seq * seq];
+            for i in 0..seq {
+                for j in i + 1..seq {
+                    mask_data[i * seq + j] = -1e9;
+                }
+            }
+            let mask = Tensor::from_vec(mask_data, &[1, 1, seq, seq], device)
+                .unwrap()
+                .expand(&[batch, HEADS, seq, seq])
+                .unwrap();
             let scores = (scores + mask).unwrap();
             // Manual softmax (candle Metal may not have kernel)
             let max = scores.max_keepdim(3).unwrap();
             let exp = scores.broadcast_sub(&max).unwrap().exp().unwrap();
             let sum = exp.sum_keepdim(3).unwrap();
             let probs = exp.broadcast_div(&sum).unwrap();
-            let attn = probs.matmul(&v).unwrap().transpose(1, 2).unwrap().contiguous().unwrap().reshape(&[batch, seq, h]).unwrap();
-            x = (attn.reshape(&[batch*seq, h]).unwrap().matmul(&l.pw).unwrap().reshape(&[batch, seq, h]).unwrap().broadcast_add(&l.pb).unwrap() + residual).unwrap();
+            let attn = probs
+                .matmul(&v)
+                .unwrap()
+                .transpose(1, 2)
+                .unwrap()
+                .contiguous()
+                .unwrap()
+                .reshape(&[batch, seq, h])
+                .unwrap();
+            x = (attn
+                .reshape(&[batch * seq, h])
+                .unwrap()
+                .matmul(&l.pw)
+                .unwrap()
+                .reshape(&[batch, seq, h])
+                .unwrap()
+                .broadcast_add(&l.pb)
+                .unwrap()
+                + residual)
+                .unwrap();
 
             // FFN
             let residual = x.clone();
@@ -270,14 +374,39 @@ fn run_candle(name: &str, device: &candle_core::Device, iters: usize) {
             let diff = x.broadcast_sub(&mean).unwrap();
             let var = diff.sqr().unwrap().mean_keepdim(2).unwrap();
             let std = (var + 1e-5).unwrap().sqrt().unwrap();
-            let n = diff.broadcast_div(&std).unwrap().broadcast_mul(&l.ln2w).unwrap().broadcast_add(&l.ln2b).unwrap();
-            let h_ff = n.reshape(&[batch*seq, h]).unwrap().matmul(&l.fw).unwrap().reshape(&[batch, seq, FFN]).unwrap().broadcast_add(&l.fb).unwrap();
+            let n = diff
+                .broadcast_div(&std)
+                .unwrap()
+                .broadcast_mul(&l.ln2w)
+                .unwrap()
+                .broadcast_add(&l.ln2b)
+                .unwrap();
+            let h_ff = n
+                .reshape(&[batch * seq, h])
+                .unwrap()
+                .matmul(&l.fw)
+                .unwrap()
+                .reshape(&[batch, seq, FFN])
+                .unwrap()
+                .broadcast_add(&l.fb)
+                .unwrap();
             // GELU approx
             let c = (2.0f64 / std::f64::consts::PI).sqrt();
             let x3 = h_ff.powf(3.0).unwrap();
             let inner = ((h_ff.clone() + (x3 * 0.044715).unwrap()).unwrap() * c).unwrap();
             let gelu = (h_ff * (inner.tanh().unwrap() + 1.0).unwrap()).unwrap() * 0.5;
-            x = (gelu.unwrap().reshape(&[batch*seq, FFN]).unwrap().matmul(&l.mw).unwrap().reshape(&[batch, seq, h]).unwrap().broadcast_add(&l.mb).unwrap() + residual).unwrap();
+            x = (gelu
+                .unwrap()
+                .reshape(&[batch * seq, FFN])
+                .unwrap()
+                .matmul(&l.mw)
+                .unwrap()
+                .reshape(&[batch, seq, h])
+                .unwrap()
+                .broadcast_add(&l.mb)
+                .unwrap()
+                + residual)
+                .unwrap();
         }
 
         // Final LN
@@ -285,8 +414,16 @@ fn run_candle(name: &str, device: &candle_core::Device, iters: usize) {
         let diff = x.broadcast_sub(&mean).unwrap();
         let var = diff.sqr().unwrap().mean_keepdim(2).unwrap();
         let std = (var + 1e-5).unwrap().sqrt().unwrap();
-        diff.broadcast_div(&std).unwrap().broadcast_mul(&lnfw).unwrap().broadcast_add(&lnfb).unwrap()
-            .narrow(1, seq - 1, 1).unwrap().squeeze(1).unwrap()
+        diff.broadcast_div(&std)
+            .unwrap()
+            .broadcast_mul(&lnfw)
+            .unwrap()
+            .broadcast_add(&lnfb)
+            .unwrap()
+            .narrow(1, seq - 1, 1)
+            .unwrap()
+            .squeeze(1)
+            .unwrap()
     };
 
     // Warmup
@@ -307,11 +444,19 @@ fn run_llamacpp() {
     use std::process::Command;
 
     // Find llama-completion
-    let cli = ["llama-completion", "llama-cli"].iter()
-        .find(|name| Command::new("which").arg(name).output().map(|o| o.status.success()).unwrap_or(false));
+    let cli = ["llama-completion", "llama-cli"].iter().find(|name| {
+        Command::new("which")
+            .arg(name)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    });
     let cli = match cli {
         Some(c) => *c,
-        None => { println!("llama.cpp: not installed (brew install llama.cpp)"); return; }
+        None => {
+            println!("llama.cpp: not installed (brew install llama.cpp)");
+            return;
+        }
     };
 
     let gguf = dirs::cache_dir()
@@ -329,7 +474,16 @@ fn run_llamacpp() {
 
     // Run 50 tokens
     let output = Command::new(cli)
-        .args(["-m", &gguf.to_string_lossy(), "-p", "The key insight of distributed machine learning is", "-n", "50", "-s", "42"])
+        .args([
+            "-m",
+            &gguf.to_string_lossy(),
+            "-p",
+            "The key insight of distributed machine learning is",
+            "-n",
+            "50",
+            "-s",
+            "42",
+        ])
         .output();
 
     match output {
@@ -337,13 +491,19 @@ fn run_llamacpp() {
             let stderr = String::from_utf8_lossy(&out.stderr);
             // Parse eval tok/s
             for line in stderr.lines() {
-                if line.contains("eval") && line.contains("tokens per second") && !line.contains("prompt") {
+                if line.contains("eval")
+                    && line.contains("tokens per second")
+                    && !line.contains("prompt")
+                {
                     if let Some(before) = line.split("tokens per second").next() {
                         if let Some(tps) = before.split_whitespace().last() {
                             if let Ok(tps) = tps.parse::<f64>() {
                                 let ms = 1000.0 / tps;
                                 println!("\nExternal comparison:");
-                                println!("{:<30} {:>8.1} ms/fwd   {:>6.1} tok/s  (Q4_0 quantized)", "llama.cpp (Metal)", ms, tps);
+                                println!(
+                                    "{:<30} {:>8.1} ms/fwd   {:>6.1} tok/s  (Q4_0 quantized)",
+                                    "llama.cpp (Metal)", ms, tps
+                                );
                                 return;
                             }
                         }
