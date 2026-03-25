@@ -114,8 +114,9 @@ pub fn openvino_matmul(
     };
     let k = *lhs.shape.last().unwrap_or(&1);
 
-    // Skip OpenVINO overhead for small matrices.
-    if m * n * k < 4096 {
+    // Skip OpenVINO for small matrices or batched (3D+) tensors.
+    // Our IR XML is 2D only — batched matmul falls back to cpu_matmul.
+    if m * n * k < 4096 || lhs.shape.len() > 2 || rhs.shape.len() > 2 {
         return Err(());
     }
 

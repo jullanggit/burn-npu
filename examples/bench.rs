@@ -172,8 +172,10 @@ fn main() {
     // NdArray (CPU)
     run_bench::<burn_ndarray::NdArray>("burn-ndarray (CPU)", 10);
 
-    // Wgpu (Metal GPU)
-    run_bench::<burn_wgpu::Wgpu>("burn-wgpu (Metal GPU)", 10);
+    // Wgpu (Metal/Vulkan GPU) — may not be available on all systems
+    if std::panic::catch_unwind(|| run_bench::<burn_wgpu::Wgpu>("burn-wgpu (GPU)", 10)).is_err() {
+        println!("{:<30} {:>12}   (no GPU adapter found)", "burn-wgpu (GPU)", "N/A");
+    }
 
     // NpuBurnBackend (NPU via MLTensor)
     #[cfg(feature = "apple")]
