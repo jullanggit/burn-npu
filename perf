@@ -1,0 +1,8 @@
+burn-npu benchmark — GPT-2 forward pass (random weights, seq=32)
+
+Backend                             Latency   Throughput
+──────────────────────────────────────────────────────────
+burn-ndarray (CPU)                639.6 ms/fwd      1.6 tok/s
+burn-npu (Apple NPU)             4093.5 ms/fwd      0.2 tok/s
+──────────────────────────────────────────────────────────
+candle (CPU)                      114.1 ms/fwd      8.8 tok/s
