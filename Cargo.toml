@@ -11,7 +11,7 @@ categories = ["science", "mathematics"]
 [features]
 default = []
 apple = []
-intel = ["openvino"]
+intel = ["openvino", "openvino-sys"]
 qualcomm = []
 
 [dependencies]
@@ -20,6 +20,7 @@ burn-tensor = { version = "0.20" }
 burn-ndarray = { version = "0.20" }
 ndarray = { version = "0.17" }
 openvino = { version = "0.7", optional = true, features = ["runtime-linking"] }
+openvino-sys = { version = "0.7", optional = true, features = ["runtime-linking"] }
 
 [dev-dependencies]
 burn = { version = "0.20" }

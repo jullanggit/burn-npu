@@ -1,0 +1,1 @@
+fish: Job 1, 'cargo run --release --example b…' terminated by signal SIGSEGV (Address boundary error)

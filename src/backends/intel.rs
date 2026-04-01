@@ -24,6 +24,11 @@ struct OvCompiledMatmul {
     compiled: openvino::CompiledModel,
 }
 
+#[cfg(feature = "intel")]
+fn ensure_openvino_loaded() -> Result<(), ()> {
+    openvino_sys::load().map_err(|_| ())
+}
+
 // ---------------------------------------------------------------------------
 // IntelFloatTensor
 // ---------------------------------------------------------------------------
@@ -114,22 +119,31 @@ pub fn openvino_matmul(
 ) -> Result<IntelFloatTensor, ()> {
     use openvino::{Core, DeviceType, ElementType, Shape as OvShape, Tensor as OvTensor};
 
+    // The runtime-linking backend keeps the loaded library in thread-local state.
+    ensure_openvino_loaded()?;
+
     let lhs_ndim = lhs.shape.len();
     let rhs_ndim = rhs.shape.len();
-    if lhs_ndim < 2 || rhs_ndim < 2 { return Err(()); }
+    if lhs_ndim < 2 || rhs_ndim < 2 {
+        return Err(());
+    }
 
     let m = lhs.shape[lhs_ndim - 2];
     let k = lhs.shape[lhs_ndim - 1];
     let n = rhs.shape[rhs_ndim - 1];
 
     // Skip OpenVINO overhead for small matmuls
-    if m * k * n < 4096 { return Err(()); }
+    if m * k * n < 4096 {
+        return Err(());
+    }
 
     // Compute batch dimensions: everything before the last 2 dims
     let lhs_batch: Vec<usize> = lhs.shape[..lhs_ndim - 2].to_vec();
     let rhs_batch: Vec<usize> = rhs.shape[..rhs_ndim - 2].to_vec();
     // Batch shapes must match (or be empty for 2D)
-    if lhs_batch != rhs_batch { return Err(()); }
+    if lhs_batch != rhs_batch {
+        return Err(());
+    }
     let batch_size: usize = lhs_batch.iter().product::<usize>().max(1);
 
     let lhs_stride = m * k; // elements per batch slice in lhs
@@ -176,7 +190,9 @@ pub fn openvino_matmul(
         );
 
         let mut core = Core::new().map_err(|_| ())?;
-        let model = core.read_model_from_buffer(ir_xml.as_bytes(), None).map_err(|_| ())?;
+        let model = core
+            .read_model_from_buffer(ir_xml.as_bytes(), None)
+            .map_err(|_| ())?;
 
         let devices = [DeviceType::NPU, DeviceType::GPU, DeviceType::CPU];
         let mut compiled = None;
@@ -186,7 +202,12 @@ pub fn openvino_matmul(
                 break;
             }
         }
-        cache.insert(cache_key, OvCompiledMatmul { compiled: compiled.ok_or(())? });
+        cache.insert(
+            cache_key,
+            OvCompiledMatmul {
+                compiled: compiled.ok_or(())?,
+            },
+        );
     }
     let entry = cache.get_mut(&cache_key).unwrap();
     let mut request = entry.compiled.create_infer_request().map_err(|_| ())?;
@@ -199,19 +220,29 @@ pub fn openvino_matmul(
         let rhs_off = b * rhs_stride;
 
         let mut lt = OvTensor::new(ElementType::F32, &lhs_ov_shape).map_err(|_| ())?;
-        lt.get_data_mut::<f32>().map_err(|_| ())?
-            .copy_from_slice(&lhs.data[lhs_off..lhs_off + lhs_stride]);
+        let lt_data = lt.get_data_mut::<f32>().map_err(|_| ())?;
+        if lt_data.len() != lhs_stride {
+            return Err(());
+        }
+        lt_data.copy_from_slice(&lhs.data[lhs_off..lhs_off + lhs_stride]);
 
         let mut rt = OvTensor::new(ElementType::F32, &rhs_ov_shape).map_err(|_| ())?;
-        rt.get_data_mut::<f32>().map_err(|_| ())?
-            .copy_from_slice(&rhs.data[rhs_off..rhs_off + rhs_stride]);
+        let rt_data = rt.get_data_mut::<f32>().map_err(|_| ())?;
+        if rt_data.len() != rhs_stride {
+            return Err(());
+        }
+        rt_data.copy_from_slice(&rhs.data[rhs_off..rhs_off + rhs_stride]);
 
         request.set_input_tensor_by_index(0, &lt).map_err(|_| ())?;
         request.set_input_tensor_by_index(1, &rt).map_err(|_| ())?;
         request.infer().map_err(|_| ())?;
 
         let output = request.get_output_tensor_by_index(0).map_err(|_| ())?;
-        result_data.extend_from_slice(output.get_data::<f32>().map_err(|_| ())?);
+        let output_data = output.get_data::<f32>().map_err(|_| ())?;
+        if output_data.len() != out_stride {
+            return Err(());
+        }
+        result_data.extend_from_slice(output_data);
     }
 
     // Output shape: [...batch_dims, m, n]
@@ -228,7 +259,10 @@ pub fn cpu_matmul(lhs: &IntelFloatTensor, rhs: &IntelFloatTensor) -> IntelFloatT
     let lhs_ndim = lhs.shape.len();
     let rhs_ndim = rhs.shape.len();
 
-    assert!(lhs_ndim >= 2 && rhs_ndim >= 2, "matmul requires at least 2D tensors");
+    assert!(
+        lhs_ndim >= 2 && rhs_ndim >= 2,
+        "matmul requires at least 2D tensors"
+    );
 
     let m = lhs.shape[lhs_ndim - 2];
     let k = lhs.shape[lhs_ndim - 1];
@@ -279,10 +313,9 @@ pub fn cpu_matmul(lhs: &IntelFloatTensor, rhs: &IntelFloatTensor) -> IntelFloatT
 
 /// Convert IntelFloatTensor -> NdArrayTensor (for delegating ops to burn-ndarray).
 pub fn intel_to_ndarray(tensor: &IntelFloatTensor) -> burn_ndarray::NdArrayTensor {
-    let array =
-        ndarray::Array::from_shape_vec(ndarray::IxDyn(&tensor.shape), tensor.data.clone())
-            .unwrap()
-            .into_shared();
+    let array = ndarray::Array::from_shape_vec(ndarray::IxDyn(&tensor.shape), tensor.data.clone())
+        .unwrap()
+        .into_shared();
     burn_ndarray::NdArrayTensor::from(array)
 }
 

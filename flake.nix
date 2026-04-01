@@ -21,13 +21,16 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-            pkgs.openssl
-            pkgs.openvino
-            pkgs.level-zero
-            pkgs.vulkan-loader
-            pkgs.libglvnd
-          ];
+          LD_LIBRARY_PATH =
+            (pkgs.lib.makeLibraryPath [
+              pkgs.openssl
+              pkgs.level-zero
+              pkgs.vulkan-loader
+              pkgs.libglvnd
+            ])
+            + ":${pkgs.openvino}/runtime/lib/intel64";
+
+          OPENVINO_INSTALL_DIR = "${pkgs.openvino}";
 
           packages = with pkgs; [
             pkg-config

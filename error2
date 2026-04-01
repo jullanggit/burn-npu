@@ -1,0 +1,3 @@
+thread 'main' (17741) panicked at src/backends/intel.rs:225:14:
+copy_from_slice: source slice length (24576) does not match destination slice length (49152)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
