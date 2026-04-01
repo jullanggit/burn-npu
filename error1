@@ -1,0 +1,15 @@
+ cargo run --release --example bench --features intel --offline
+warning: unused config key `unstable.scrape-examples` in `/home/julius/.cargo/config.toml`
+   Compiling burn-npu v0.3.0 (/home/julius/.cache/remove-me/burn-npu)
+    Finished `release` profile [optimized] target(s) in 49.84s
+     Running `target/release/examples/bench`
+burn-npu benchmark — GPT-2 forward pass (random weights, seq=32)
+
+Backend                             Latency   Throughput
+──────────────────────────────────────────────────────────
+burn-ndarray (CPU)                499.0 ms/fwd      2.0 tok/s
+
+thread 'main' (9123) panicked at /home/julius/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/openvino-sys-0.7.3/src/generated/functions.rs:4:1:
+an `openvino_c` shared library is not loaded on this thread
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+fish: Job 1, 'cargo run --release --example b…' terminated by signal SIGABRT (Abort)
